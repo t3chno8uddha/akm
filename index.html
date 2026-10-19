@@ -1408,34 +1408,28 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
 
   // ---------- the King's night script ----------
   // d carries roles (the dealt Role cards), burnedRole, night, ns, fatUsed, sniperUsed and shotNight.
+  // A plain script for the King to click through: no choices, nothing tracked. Lines that only apply
+  // sometimes say so in their note, and the King skips them aloud when they don't.
   function nightSteps(d) {
-    const ns = d.ns, steps = [];
+    const steps = [];
     const has = (r) => d.roles.includes(r) || d.burnedRole === r;
     const burnedOnly = (r) => d.burnedRole === r && !d.roles.includes(r);
     const BURN = 'Burned: nobody will answer. Call it anyway, so the table can’t tell.';
+    const call = (r, say, note) => { const b = burnedOnly(r); steps.push({ role: r, burned: b, say, note: b ? BURN : note }); };
     steps.push({ say: 'All Crew members close their eyes. The Watch hold up their fists.' });
-    // Roles always reveal themselves to the King; then they choose whether to use the ability.
     if (has('Fatale')) {
-      const b = burnedOnly('Fatale'), used = !b && d.fatUsed;
-      steps.push({ role: 'Fatale', burned: b, say: 'The Fatale, reveal yourself to me. If you wish to act, pick a target.',
-        note: b ? BURN : used ? 'Already used this game: she reveals herself, but can’t act.' : 'Once a game.', choice: b || used ? null : 'fatale' });
-      if (!b && !used && ns.fatale === true) steps.push({ say: 'Target player is busy for the night. They can’t act at Dusk, and they wrap both hands around their eyes.' });
+      call('Fatale', 'The Fatale, reveal yourself to me. If you wish to act, pick a target.', 'Once a game.');
+      steps.push({ say: 'Target player is busy for the night. They can’t act at Dusk, and they wrap both hands around their eyes.', note: 'Only if the Fatale picked a target.' });
     }
     steps.push({ say: 'Those of you in the Watch who are Feds, unclench your fists.', note: 'Look for palms.' });
-    const spy = has('Spy'), rig = has('Rigger');
-    steps.push({ role: spy ? 'Spy' : null, burned: spy && burnedOnly('Spy'), say: 'All of you, clench a fist now.' + (spy ? ' The Spy, reveal yourself to me and pick a target from the watch.' : ''),
-      note: !spy ? '' : burnedOnly('Spy') ? BURN : 'If the target attempted Untying on the Watch, nod your head.' });
-    if (spy || rig) {
-      steps.push({ role: rig ? 'Rigger' : null, burned: rig && burnedOnly('Rigger'),
-        say: [spy ? 'The Spy, you may retire now.' : '', rig ? 'The Rigger, reveal yourself to me. If you wish to act, raise your hand.' : ''].filter(Boolean).join(' '),
-        note: !rig ? '' : burnedOnly('Rigger') ? BURN : 'If the Rigger raises his hand, tonight’s Untie is cancelled. Only you know if it was effective.' });
-    }
+    steps.push({ say: 'All of you, clench a fist now.' });
+    if (has('Spy')) call('Spy', 'The Spy, reveal yourself to me and pick a target from the Watch.', 'If the target attempted Untying on the Watch, nod your head.');
+    if (has('Rigger')) call('Rigger', (has('Spy') ? 'The Spy, you may retire now. ' : '') + 'The Rigger, reveal yourself to me. If you wish to act, raise your hand.', 'If the Rigger raises his hand, tonight’s Untie is cancelled. Only you know if it was effective.');
+    else if (has('Spy')) steps.push({ say: 'The Spy, you may retire now.' });
     if (has('Sniper')) {
-      if (d.shotNight !== null && d.shotNight === d.night - 1) steps.push({ say: 'The shot player may close his eyes now.' });
-      const b = burnedOnly('Sniper'), used = !b && d.sniperUsed;
-      steps.push({ role: 'Sniper', burned: b, say: 'The Sniper, reveal yourself to me. If you wish to act, pick a target.',
-        note: b ? BURN : used ? 'Already used this game: they reveal themselves, but can’t act.' : 'Once a game.', choice: b || used ? null : 'sniper' });
-      if (!b && !used && ns.sniper === true) steps.push({ say: 'Target player is shot for the next day. They can’t act at Dusk or Dawn, and keep their eyes open at Dusk.' });
+      steps.push({ say: 'The shot player may close his eyes now.', note: 'Only if someone was shot the night before.' });
+      call('Sniper', 'The Sniper, reveal yourself to me. If you wish to act, pick a target.', 'Once a game.');
+      steps.push({ say: 'Target player is shot for the next day. They can’t act at Dusk or Dawn, and keep their eyes open at Dusk.', note: 'Only if the Sniper picked a target.' });
     }
     steps.push({ act: 'Pick the Vetter, and call them out. The Vetter opens their eyes, and you show them with your fingers how many Unties you still need.', note: 'A player can only be the Vetter once, and no one from tonight’s Watch can be the Vetter.' });
     steps.push({ say: 'All Crew members open their eyes, and the Vetter reveals his role.', last: true });
@@ -1486,8 +1480,6 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
   }
   function endNight() {
     const d = NIGHT.src;
-    if (d.ns.fatale === true) d.fatUsed = true;
-    if (d.ns.sniper === true) { d.sniperUsed = true; d.shotNight = d.night; }
     d.night += 1;
     d.ns = { step: 0, fatale: null, sniper: null };
     NIGHT.save();
