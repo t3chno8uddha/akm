@@ -461,6 +461,18 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
           <div class="panel">
             <div class="rows" id="role-rows"></div>
             <div class="row">
+              <div class="row-text"><span class="row-label" id="l-rcount">Roles in play</span><span class="row-sub">Drawn at random from the ones on</span></div>
+              <div class="stepper deck-stepper" role="group" aria-labelledby="l-rcount">
+                <button type="button" data-key="roleCount" data-d="-1" aria-label="One role fewer">&minus;</button>
+                <output id="out-rcount">8</output>
+                <button type="button" data-key="roleCount" data-d="1" aria-label="One role more">+</button>
+              </div>
+            </div>
+            <div class="row">
+              <div class="row-text"><span class="row-label" id="l-rburn">Burn a Role card</span><span class="row-sub">One goes to the King, unseen</span></div>
+              <label class="switch"><input type="checkbox" id="opt-rburn" role="switch" aria-labelledby="l-rburn"><span class="track"></span></label>
+            </div>
+            <div class="row">
               <div class="row-text"><span class="row-label">Rookies</span><span class="row-sub">Fill the rest of the deck</span></div>
               <output class="count" id="out-hench">1</output>
             </div>
@@ -750,7 +762,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     C: { name: 'Crook', side: 'c', icon: FEDORA },
     F: { name: 'Fed', side: 'f', icon: BADGE },
     X: { name: 'Fixer', full: 'The Fixer', side: 'c', icon: emoji('\u{1F3A9}'), rule: 'The Fixer is a Crook. During Dawn, you may call a Deadlock.' },
-    D: { name: 'Director', full: 'The Director', side: 'f', icon: emoji('\u{1F396}\u{FE0F}'), rule: 'The Director is a Fed. During Dusk, you may choose not to Untie the King.' },
+    D: { name: 'Director', full: 'The Director', side: 'f', icon: emoji('\u{1F396}\u{FE0F}'), rule: 'The Director knows other Feds.' },
   };
 
   // Role cards: the taglines and abilities as written in the rules. Each card is a polaroid from ART, by the same key.
@@ -851,8 +863,12 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
   const crewOf = (st) => st.players - 1;
   const loySpecials = (st) => (st.fixer ? 1 : 0) + (st.director ? 1 : 0);
   const dealtCount = (st) => st.crooks + st.feds + loySpecials(st) - (st.burn === 'none' ? 0 : 1);
-  const roleSpecials = (st) => ROLE_LIST.reduce((n, r) => n + (st.roles[r] ? (r === 'Twins' ? 2 : 1) : 0), 0);
-  const henchmen = (st) => st.players - roleSpecials(st);   // Crew + 1 Role cards, one burned
+  // the special cards a deal can hold: the roles drawn, plus one if the Twins are among them (counted as if they always are)
+  const roleSpecials = (st) => { const k = roleCountOf(st); return k + (k > 0 && st.roles.Twins ? 1 : 0); };
+  const roleDeck = (st) => st.players - (st.roleBurn === false ? 1 : 0);   // one per Crew member, plus one burned unless burning is off
+  const rolePool = (st) => ROLE_LIST.filter((r) => st.roles[r]);
+  const roleCountOf = (st) => { const n = rolePool(st).length; return st.roleCount == null ? n : Math.min(st.roleCount, n); };
+  const henchmen = (st) => roleDeck(st) - roleSpecials(st);
 
   function outcomes(st) {
     const c = st.crooks + (st.fixer ? 1 : 0), f = st.feds + (st.director ? 1 : 0);
@@ -883,7 +899,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
   }
   function validateRoles(st) {
     const h = henchmen(st);
-    if (h < 0) return { ok: false, msg: `That's ${roleSpecials(st)} Role cards, and this table takes ${st.players}. Turn ${plural(-h, 'card')} off.` };
+    if (h < 0) return { ok: false, msg: `That's up to ${roleSpecials(st)} Role cards, and this table takes ${roleDeck(st)}. Lower Roles in play, or turn some off.` };
     return { ok: true, h };
   }
   const sizeOk = (st) => st.players >= MIN_P && st.players <= MAX_P;
@@ -904,14 +920,17 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     return `Loyalty: ${listText(parts)}. ${burn}`;
   }
   function roleLine(st) {
-    const parts = ROLE_LIST.filter((r) => st.roles[r]).map(roleRef);
+    const pool = rolePool(st), k = roleCountOf(st), burn = st.roleBurn === false ? 'No card is burned.' : 'One card is burned.';
+    if (k < pool.length) return `Roles: ${k} drawn from ${listText(pool.map(roleRef))}, the rest Rookies. ${burn}`;
+    const parts = pool.map(roleRef);
     const h = henchmen(st);
     if (h > 0) parts.push(plural(h, 'Rookie'));
-    return `Roles: ${listText(parts)}. One card is burned.`;
+    return `Roles: ${listText(parts)}. ${burn}`;
   }
   const sameAsRec = (st) => !!REC[st.players]
     && LOY_KEYS.every((k) => REC[st.players][k] === st[k])
-    && ROLE_LIST.every((r) => !!st.roles[r] === REC_ROLES[st.players].includes(r));
+    && ROLE_LIST.every((r) => !!st.roles[r] === REC_ROLES[st.players].includes(r))
+    && st.roleCount == null && st.roleBurn !== false;
   function applyDeckFor(st, p) {
     if (REC[p]) Object.assign(st, REC[p]);
     else if (p > 10) {
@@ -919,9 +938,11 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
       Object.assign(st, { crooks, feds: crew - crooks - 2, fixer: true, director: true, burn: 'none' });
     }
     st.roles = recRoles(p);
+    st.roleCount = null;
+    st.roleBurn = true;
   }
   function burnedText(burnedLoy, burnedRole) {
-    return listText([burnedLoy ? `a ${LOY[burnedLoy].full || LOY[burnedLoy].name} token` : null, `${roleRef(burnedRole)} card`].filter(Boolean));
+    return listText([burnedLoy ? `a ${LOY[burnedLoy].full || LOY[burnedLoy].name} token` : null, burnedRole ? `${roleRef(burnedRole)} card` : null].filter(Boolean));
   }
   // What the Fixer's and Director's tokens tell them, as data: only what that player may know, so an online
   // phone is never sent anyone else's cards. Then the line it makes under the token.
@@ -966,11 +987,12 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (st.burn === 'plain') { shuffle(plain); burnedLoy = plain.pop(); loy = plain.concat(sp); }
     else if (st.burn === 'any') { const all = shuffle(plain.concat(sp)); burnedLoy = all.pop(); loy = all; }
     else loy = plain.concat(sp);
+    const pick = shuffle(rolePool(st)).slice(0, roleCountOf(st));   // Roles in play: drawn from the ones switched on
     const roles = [];
-    ROLE_LIST.forEach((r) => { if (st.roles[r]) { roles.push(r); if (r === 'Twins') roles.push('TwinsB'); } });
-    while (roles.length < n) roles.push('Rookie');
+    pick.forEach((r) => { roles.push(r); if (r === 'Twins') roles.push('TwinsB'); });
+    while (roles.length < roleDeck(st)) roles.push('Rookie');
     shuffle(roles);
-    const burnedRole = roles.pop();
+    const burnedRole = st.roleBurn === false ? null : roles.pop();
     return { king, order, loy: shuffle(loy), roles, burnedLoy, burnedRole };
   }
   const freshNight = () => ({ night: 1, ns: { step: 0, fatale: null, sniper: null }, fatUsed: false, sniperUsed: false, shotNight: null });
@@ -1024,10 +1046,14 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     const st = cfg(), crew = crewOf(st);
     $('out-crooks').textContent = st.crooks;
     $('out-feds').textContent = st.feds;
+    const pool = rolePool(st).length, rc = roleCountOf(st);
     document.querySelectorAll('.deck-stepper button').forEach((b) => {
-      const v = st[b.dataset.key];
-      b.disabled = +b.dataset.d < 0 ? v <= 0 : v >= Math.max(0, crew);
+      const isRc = b.dataset.key === 'roleCount';
+      const v = isRc ? rc : st[b.dataset.key], max = isRc ? pool : Math.max(0, crew);
+      b.disabled = +b.dataset.d < 0 ? v <= 0 : v >= max;
     });
+    $('out-rcount').textContent = `${rc} of ${pool}`;
+    $('opt-rburn').checked = st.roleBurn !== false;
     $('opt-fixer').checked = st.fixer;
     $('opt-director').checked = st.director;
     document.querySelectorAll('input[name="burn"]').forEach((r) => { r.checked = r.value === st.burn; });
@@ -1060,7 +1086,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     const vr = validateRoles(st);
     $('out-hench').textContent = Math.max(0, henchmen(st));
     $('role-summary').innerHTML = vr.ok
-      ? `<span>${plural(st.players, 'Role card')}: one for each of the Crew, and one burned to the King.</span>`
+      ? `<span>${plural(roleDeck(st), 'Role card')}: one for each of the Crew${st.roleBurn === false ? '' : ', and one burned to the King'}.</span>`
       : `<span class="bad">${esc(vr.msg)}</span>`;
     return v.ok && vr.ok;
   }
@@ -1140,7 +1166,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     const d = S.deal;
     showKing({
       progress: `Deal ${d.no}`, name: nameOf(d.names, d.king),
-      text: `The phone goes round the Crew clockwise from the King's left, starting with ${nameOf(d.names, d.order[0])}. The King gets it last, with the burned cards.`,
+      text: `The phone goes round the Crew clockwise from the King's left, starting with ${nameOf(d.names, d.order[0])}. ${d.burnedLoy || d.burnedRole ? 'The King gets it last, with the burned cards.' : 'Nothing is burned this deal.'}`,
       back: 'Setup', onBack: goSetup, go: 'Start passing',
       onGo: () => { const dd = S.deal; dd.phase = 'dealing'; dd.pos = 0; saveS(); goPass('deal'); },
     });
@@ -1183,7 +1209,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
   function afterDealPass() {
     const d = S.deal;
     d.pos += 1;
-    if (d.pos > d.crew) { d.phase = 'done'; d.pos = 0; saveS(); goTable(); return; }
+    if (d.pos > d.crew || (d.pos === d.crew && !d.burnedLoy && !d.burnedRole)) { d.phase = 'done'; d.pos = 0; saveS(); goTable(); return; }
     saveS();
     goPass('deal');
   }
@@ -1202,10 +1228,12 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     $('table-king').textContent = `The King is ${nameOf(d.names, d.king)}`;
     $('table-deck').textContent = `${loyLine(d.deck)} ${roleLine(d.deck)}`;
     $('act-night-sub').textContent = `Night ${d.night}: the King's calls, in order.`;
-    $('act-burned-sub').textContent = d.burnedLoy ? 'The Loyalty token and the Role card left out of the deal.' : 'The Role card left out of the deal.';
+    $('act-burned').hidden = !d.burnedLoy && !d.burnedRole;
+    $('act-burned-sub').textContent = burnedSub(d.burnedLoy, d.burnedRole);
     keepAwake(true);
     show('v-table');
   }
+  const burnedSub = (l, r) => (l && r ? 'The Loyalty token and the Role card left out of the deal.' : l ? 'The Loyalty token left out of the deal.' : 'The Role card left out of the deal.');
   function goSeats() {
     const d = S.deal;
     $('seat-grid').innerHTML = d.order.map((pi, i) => {
@@ -1245,6 +1273,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
       $(`${id}-front`).className = 'face front';
     });
     $('token').hidden = !!c.gate || !c.tokenCode;
+    $('card').hidden = !c.gate && !c.roleName;
     if (!c.gate && ART[c.roleName] && typeof Image === 'function') {   // decode the photo now, so the flip doesn't wait for it
       const im = new Image();
       im.src = ART[c.roleName];
@@ -1260,7 +1289,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     else if (!any && !P.seen) {
       hint = P.burned ? 'These are the burned cards. Tap to look when only you can see the screen.'
         : P.passing ? 'Tap the token or the card when only you can see the screen.' : 'Tap the token or the card to look.';
-      label = hasToken ? 'Show both' : 'Show the card';
+      label = hasToken && !$('card').hidden ? 'Show both' : hasToken ? 'Show the token' : 'Show the card';
     } else if (any) {
       hint = P.passing ? 'Remember them, then hide them and pass the phone on.' : 'Tap a piece to turn it back over.';
       label = P.passing ? 'Hide and pass on' : 'Hide';
@@ -1586,10 +1615,11 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (c.isKing) {
       box.innerHTML = `<button type="button" class="action king" data-act="king"><span class="a-tag">You're the King</span><span class="a-title">The King</span><span class="a-sub">Your polaroid. This one's for everyone to see.</span></button>`
         + `<button type="button" class="action king" data-act="night"><span class="a-tag">You're the King</span><span class="a-title">Night script</span><span class="a-sub">Night ${N.kingNight ? N.kingNight.night : 1}: your calls, in order.</span></button>`
-        + `<button type="button" class="action king" data-act="burned"><span class="a-tag">You're the King</span><span class="a-title">The burned cards</span><span class="a-sub">${c.burnedLoy ? 'The Loyalty token and the Role card left out of the deal.' : 'The Role card left out of the deal.'}</span></button>`
+        + (c.burnedLoy || c.burnedRole ? `<button type="button" class="action king" data-act="burned"><span class="a-tag">You're the King</span><span class="a-title">The burned cards</span><span class="a-sub">${burnedSub(c.burnedLoy, c.burnedRole)}</span></button>` : '')
         + `<button type="button" class="action king" data-act="standoff"><span class="a-tag">You're the King</span><span class="a-title">Stand-Off</span><span class="a-sub">Every Loyalty and Role, as the Crew reveal them to you.</span></button>`;
     } else {
-      box.innerHTML = `<button type="button" class="action lead" data-act="cards"><span class="a-tag">Deal ${c.no}</span><span class="a-title">Your hand</span><span class="a-sub">Your Loyalty token and Role card. When you're the Vetter, turn over the card alone.</span></button>`;
+      box.innerHTML = `<button type="button" class="action lead" data-act="cards"><span class="a-tag">Deal ${c.no}</span><span class="a-title">Your hand</span><span class="a-sub">Your Loyalty token and Role card. When you're the Vetter, turn over the card alone.</span></button>`
+        + `<button type="button" class="action" data-act="reveal"><span class="a-title">Reveal your role</span><span class="a-sub">Show the table, and every phone, which Role card you hold. Your Loyalty stays hidden.</span></button>`;
     }
   }
   function onCardAction(act) {
@@ -1597,6 +1627,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (!c) return;
     if (act === 'cards') openMyCards();
     else if (act === 'king') openKingCard();
+    else if (act === 'reveal') askReveal();
     else if (act === 'burned') {
       openReveal({ eyebrow: 'The King', name: 'The burned cards', sub: '', progress: `Deal ${c.no}`, tokenCode: c.burnedLoy, roleName: c.burnedRole, burned: true, info: '', passing: false, menuLabel: 'Back', onMenu: backToOnline, onDone: backToOnline });
     } else if (act === 'night') {
@@ -1605,6 +1636,18 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     } else if (act === 'standoff') {
       showStandoff({ rows: c.ledger, burnedLoy: c.burnedLoy, burnedRole: c.burnedRole }, backToOnline);
     }
+  }
+  function askReveal() {
+    const c = N.cards;
+    if (!c || c.isKing) return;
+    openSheet(`Reveal ${roleTitle(c.role)}?`, 'Every phone at the table is told which Role card you hold. Your Loyalty stays hidden.', [
+      { label: 'Reveal it', kind: 'primary', fn: () => { if (N.mode === 'host') revealRole(N.pid); else send(RT.conn, { t: 'reveal' }); } },
+      { label: 'Cancel' },
+    ]);
+  }
+  function showRevealed(m) {
+    if (!m || !own(ROLES, m.role)) return;
+    openSheet(m.pid === N.pid ? `You revealed ${roleTitle(m.role)}` : `${String(m.name || 'Someone')} is ${roleTitle(m.role)}`, ROLES[m.role].text, [{ label: 'OK', kind: 'primary' }]);
   }
   function openKingCard() {
     const c = N.cards;
@@ -1624,7 +1667,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
   function validCards(m) {
     if (!m || typeof m.no !== 'number' || typeof m.id !== 'string') return false;
     if (m.isKing) {
-      return own(ROLES, m.burnedRole) && (m.burnedLoy === null || own(LOY, m.burnedLoy))
+      return (m.burnedRole === null || own(ROLES, m.burnedRole)) && (m.burnedLoy === null || own(LOY, m.burnedLoy))
         && Array.isArray(m.roles) && m.roles.every((r) => own(ROLES, r))
         && Array.isArray(m.ledger) && m.ledger.every((r) => r && typeof r.name === 'string' && own(LOY, r.loy) && own(ROLES, r.role));
     }
@@ -1683,7 +1726,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (m.t === 'lobby' && Array.isArray(m.players)) {
       LOBBY = {
         dealId: String(m.dealId || ''), no: +m.no || 0, kingPid: typeof m.kingPid === 'string' ? m.kingPid : null,
-        kingName: String(m.kingName || ''), deck: String(m.deck || ''),
+        kingName: String(m.kingName || ''), deck: String(m.deck || ''), revealed: m.revealed && typeof m.revealed === 'object' ? m.revealed : {},
         players: m.players.filter((x) => x && typeof x.pid === 'string')
           .map((x) => ({ pid: x.pid, name: String(x.name || 'Player'), online: !!x.online, inDeal: !!x.inDeal })),
       };
@@ -1691,6 +1734,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
       return;
     }
     if (m.t === 'cards') { receiveCards(m); return; }
+    if (m.t === 'revealed') { showRevealed(m); return; }
     if (m.t === 'bye') removedByHost();
   }
   function removedByHost() {
@@ -1722,15 +1766,16 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     $('lobby-lede').textContent = lede;
     $('lobby-deck').hidden = !(L && L.dealId && L.deck);
     $('lobby-deck').textContent = L ? L.deck : '';
-    renderPlayers($('lobby-list'), L ? L.players : null, L ? L.kingPid : null, false);
+    renderPlayers($('lobby-list'), L ? L.players : null, L ? L.kingPid : null, false, L ? L.revealed : null);
     if (cardsOk) cardActions($('lobby-actions')); else $('lobby-actions').innerHTML = '';
   }
   // One list for the lobby and the host: seat, name, tags, and for the host the seat controls.
-  function renderPlayers(box, players, kingPid, host) {
+  function renderPlayers(box, players, kingPid, host, revealed) {
     if (!players) { box.innerHTML = '<li><span class="empty">Not connected yet.</span></li>'; return; }
     if (!players.length) { box.innerHTML = `<li><span class="empty">${host ? 'Nobody yet. Players show up here when they tap Join the table.' : 'Nobody yet.'}</span></li>`; return; }
     box.innerHTML = players.map((p, i) => {
-      const tags = (p.pid === N.pid ? '<span class="tagp">You</span>' : '') + (p.pid === kingPid ? '<span class="tagp king">King</span>' : '') + (p.online ? '' : '<span class="tagp">Away</span>');
+      const tags = (p.pid === N.pid ? '<span class="tagp">You</span>' : '') + (p.pid === kingPid ? '<span class="tagp king">King</span>' : '') + (p.online ? '' : '<span class="tagp">Away</span>')
+        + (revealed && own(ROLES, revealed[p.pid]) ? `<span class="tagp king">${esc(roleTitle(revealed[p.pid]))}</span>` : '');
       const tools = !host ? '<span></span>' : '<span class="tools">'
         + `<button type="button" class="mini-btn" data-move="-1" data-pid="${esc(p.pid)}" aria-label="Move ${esc(p.name)} up"${i === 0 ? ' disabled' : ''}>↑</button>`
         + `<button type="button" class="mini-btn" data-move="1" data-pid="${esc(p.pid)}" aria-label="Move ${esc(p.name)} down"${i === players.length - 1 ? ' disabled' : ''}>↓</button>`
@@ -1818,6 +1863,18 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (!pid || RT.conns.get(pid) !== conn) return;
     RT.seen.set(pid, Date.now());
     if (m.t === 'leave') dropPlayer(pid, false);
+    else if (m.t === 'reveal') revealRole(pid);
+  }
+  function revealRole(pid) {
+    const d = N.host.deal, c = d && d.cards[pid];
+    if (!c || c.isKing) return;
+    d.revealed = d.revealed || {};
+    if (d.revealed[pid]) return;
+    d.revealed[pid] = c.role;
+    hostChanged();
+    const msg = { t: 'revealed', pid, name: pname(pid), role: c.role };
+    RT.conns.forEach((conn) => send(conn, msg));
+    showRevealed(msg);
   }
   function hostDrop(conn) {
     const pid = conn.akmPid;
@@ -1841,7 +1898,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     const h = N.host, d = h.deal;
     return {
       t: 'lobby', dealId: d ? d.id : '', no: d ? d.no : 0, kingPid: d ? d.kingPid : (h.king !== 'random' ? h.king : null),
-      kingName: d ? pname(d.kingPid) : '', deck: d ? d.deck : '',
+      kingName: d ? pname(d.kingPid) : '', deck: d ? d.deck : '', revealed: (d && d.revealed) || {},
       players: h.order.map((pid) => ({ pid, name: pname(pid), online: isOnline(pid), inDeal: !!(d && d.cards[pid]) })),
     };
   }
@@ -1880,7 +1937,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     const h = N.host, d = h.deal;
     if (h.setup.players !== h.order.length) { h.setup.players = h.order.length; applyDeckFor(h.setup, h.order.length); }
     const players = h.order.map((pid) => ({ pid, name: pname(pid), online: isOnline(pid) }));
-    renderPlayers($('host-list'), players, d ? d.kingPid : (h.king !== 'random' ? h.king : null), true);
+    renderPlayers($('host-list'), players, d ? d.kingPid : (h.king !== 'random' ? h.king : null), true, d ? d.revealed : null);
     $('host-plays').checked = !!h.plays;
     $('host-plays-sub').textContent = h.plays ? `As ${N.name || 'Host'}` : 'Just runs the table';
     const sel = $('host-king'), key = h.order.map((pid) => `${pid}:${pname(pid)}`).join('|');
@@ -2018,10 +2075,13 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     // the deck panel
     document.querySelectorAll('.deck-stepper button').forEach((b) => b.addEventListener('click', () => {
       const st = cfg(), k = b.dataset.key;
-      st[k] = Math.min(Math.max(0, crewOf(st)), Math.max(0, st[k] + +b.dataset.d));
+      if (k === 'roleCount') {
+        const max = rolePool(st).length, n = Math.min(max, Math.max(0, roleCountOf(st) + +b.dataset.d));
+        st.roleCount = n >= max ? null : n;   // at the top: all of them, so roles switched on later count too
+      } else st[k] = Math.min(Math.max(0, crewOf(st)), Math.max(0, st[k] + +b.dataset.d));
       deckChanged();
     }));
-    [['opt-fixer', 'fixer'], ['opt-director', 'director'], ['opt-dirinfo', 'dirInfo'], ['opt-fixinfo', 'fixerInfo']].forEach(([id, k]) => {
+    [['opt-fixer', 'fixer'], ['opt-director', 'director'], ['opt-rburn', 'roleBurn'], ['opt-dirinfo', 'dirInfo'], ['opt-fixinfo', 'fixerInfo']].forEach(([id, k]) => {
       $(id).addEventListener('change', (e) => { cfg()[k] = e.target.checked; deckChanged(); });
     });
     $('role-rows').addEventListener('change', (e) => {
