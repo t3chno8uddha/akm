@@ -1414,10 +1414,12 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     const burnedOnly = (r) => d.burnedRole === r && !d.roles.includes(r);
     const BURN = 'Burned: nobody will answer. Call it anyway, so the table can’t tell.';
     steps.push({ say: 'All Crew members close their eyes. The Watch hold up their fists.' });
-    if (has('Fatale') && !d.fatUsed) {
-      const b = burnedOnly('Fatale');
-      steps.push({ role: 'Fatale', burned: b, say: 'The Fatale, if you wish to act, reveal yourself to me and pick a target.', note: b ? BURN : 'Once a game.', choice: b ? null : 'fatale' });
-      if (!b && ns.fatale === true) steps.push({ say: 'Target player is busy for the night. They can’t act at Dusk, and they wrap both hands around their eyes.', note: 'The Fatale call doesn’t repeat after this.' });
+    // Roles always reveal themselves to the King; then they choose whether to use the ability.
+    if (has('Fatale')) {
+      const b = burnedOnly('Fatale'), used = !b && d.fatUsed;
+      steps.push({ role: 'Fatale', burned: b, say: 'The Fatale, reveal yourself to me. If you wish to act, pick a target.',
+        note: b ? BURN : used ? 'Already used this game: she reveals herself, but can’t act.' : 'Once a game.', choice: b || used ? null : 'fatale' });
+      if (!b && !used && ns.fatale === true) steps.push({ say: 'Target player is busy for the night. They can’t act at Dusk, and they wrap both hands around their eyes.' });
     }
     steps.push({ say: 'Those of you in the Watch who are Feds, unclench your fists.', note: 'Look for palms.' });
     const spy = has('Spy'), rig = has('Rigger');
@@ -1425,16 +1427,15 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
       note: !spy ? '' : burnedOnly('Spy') ? BURN : 'If the target attempted Untying on the Watch, nod your head.' });
     if (spy || rig) {
       steps.push({ role: rig ? 'Rigger' : null, burned: rig && burnedOnly('Rigger'),
-        say: [spy ? 'The Spy, you may retire now.' : '', rig ? 'The Rigger, if you wish to act, reveal yourself to me.' : ''].filter(Boolean).join(' '),
-        note: !rig ? '' : burnedOnly('Rigger') ? BURN : 'If the Rigger reveals himself, tonight’s Untie is cancelled. Only you know if it was effective.' });
+        say: [spy ? 'The Spy, you may retire now.' : '', rig ? 'The Rigger, reveal yourself to me. If you wish to act, raise your hand.' : ''].filter(Boolean).join(' '),
+        note: !rig ? '' : burnedOnly('Rigger') ? BURN : 'If the Rigger raises his hand, tonight’s Untie is cancelled. Only you know if it was effective.' });
     }
     if (has('Sniper')) {
       if (d.shotNight !== null && d.shotNight === d.night - 1) steps.push({ say: 'The shot player may close his eyes now.' });
-      if (!d.sniperUsed) {
-        const b = burnedOnly('Sniper');
-        steps.push({ role: 'Sniper', burned: b, say: 'The Sniper, if you wish to act, reveal yourself to me and pick a target.', note: b ? BURN : 'Once a game.', choice: b ? null : 'sniper' });
-        if (!b && ns.sniper === true) steps.push({ say: 'Target player is shot for the next day. They can’t act at Dusk or Dawn, and keep their eyes open at Dusk.', note: 'The Sniper call doesn’t repeat after this.' });
-      }
+      const b = burnedOnly('Sniper'), used = !b && d.sniperUsed;
+      steps.push({ role: 'Sniper', burned: b, say: 'The Sniper, reveal yourself to me. If you wish to act, pick a target.',
+        note: b ? BURN : used ? 'Already used this game: they reveal themselves, but can’t act.' : 'Once a game.', choice: b || used ? null : 'sniper' });
+      if (!b && !used && ns.sniper === true) steps.push({ say: 'Target player is shot for the next day. They can’t act at Dusk or Dawn, and keep their eyes open at Dusk.' });
     }
     steps.push({ act: 'Pick the Vetter, and call them out. The Vetter opens their eyes, and you show them with your fingers how many Unties you still need.', note: 'A player can only be the Vetter once, and no one from tonight’s Watch can be the Vetter.' });
     steps.push({ say: 'All Crew members open their eyes, and the Vetter reveals his role.', last: true });
@@ -1528,7 +1529,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
   }
   function startLink() {
     stopLink();
-    Object.assign(RT, { halt: false, taken: 0, why: '', recoAt: 0, connAt: 0, lastHost: 0, pingAt: 0 });
+    Object.assign(RT, { lastErr: '', halt: false, taken: 0, why: '', recoAt: 0, connAt: 0, lastHost: 0, pingAt: 0 });
     buildPeer();
     RT.tick = setInterval(tick, TICK_MS);
     status();
@@ -1544,6 +1545,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (!peer) return;
     peer.on('open', () => {
       if (RT.peer !== peer) return;
+      RT.lastErr = '';
       RT.taken = 0;
       if (!hosting && !(RT.conn && RT.conn.open)) connectToHost();
       status();
@@ -1554,6 +1556,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
   }
   function peerError(err) {
     const type = err && err.type;
+    RT.lastErr = String(type || 'unknown');   // shown on the status line while it can't connect, to tell a blocked phone from a bug
     if (type === 'unavailable-id') {          // someone else holds the table's ID
       RT.taken += 1;
       if (RT.taken > 2) haltTaken();
@@ -1587,7 +1590,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
   }
   function status() {
     if (!N.mode) return;
-    let kind = 'pending', text = 'Connecting';
+    let kind = 'pending', text = RT.lastErr ? `Connecting \u00b7 ${RT.lastErr}` : 'Connecting';
     if (N.mode === 'host') {
       const n = [...RT.conns.values()].filter((c) => c.open).length;
       if (RT.halt) { kind = 'bad'; text = RT.taken ? 'Another device is hosting' : 'This browser can’t play online'; }
@@ -1691,6 +1694,8 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (!name) { homeError('Type your name first, so the table knows who you are.'); $('my-name').focus(); return; }
     N.name = name;
     N.mode = 'player';
+    Object.assign(N, { cards: null, kingNight: null });   // a new join is a new game: nothing carries over
+    LOBBY = null;
     saveN();
     goLobby();
     startLink();
@@ -1736,6 +1741,7 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (m.t === 'cards') { receiveCards(m); return; }
     if (m.t === 'revealed') { showRevealed(m); return; }
     if (m.t === 'bye') removedByHost();
+    if (m.t === 'ended') gameEnded();
   }
   function removedByHost() {
     stopLink();
@@ -1744,6 +1750,14 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     saveN();
     goHome();
     homeError('The host took you off the table. Join again to sit back down.');
+  }
+  function gameEnded() {
+    stopLink();
+    Object.assign(N, { mode: null, cards: null, kingNight: null });
+    LOBBY = null;
+    saveN();
+    goHome();
+    homeError('The host ended the game.');
   }
   function goLobby() {
     keepAwake(!!(N.cards && N.cards.isKing));
@@ -1800,7 +1814,9 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (why) { homeError(why); return; }
     N.name = $('my-name').value.trim() || N.name || '';
     N.mode = 'host';
-    if (!N.host) N.host = { plays: true, players: [], order: [], king: 'random', setup: freshSetup(9), deal: null, no: 0 };
+    // a fresh table every time Host is tapped: no seats or deal from before, only the deck settings carry over
+    N.host = { plays: true, players: [], order: [], king: 'random', setup: N.host ? N.host.setup : freshSetup(9), deal: null, no: 0 };
+    Object.assign(N, { cards: null, kingNight: null });
     ensureSelf();
     saveN();
     goHost();
@@ -1991,8 +2007,16 @@ details.panel > .row:first-of-type { border-top: 1px solid var(--line); }
     if (cards[N.pid]) receiveCards(cards[N.pid]);
   }
   function stopHosting() {
-    openSheet('Stop hosting?', 'Everyone loses the connection. This device keeps the seats and the deal, so hosting again picks up where it left off.', [
-      { label: 'Stop hosting', kind: 'primary', fn: () => { stopLink(); N.mode = null; saveN(); goHome(); } },
+    openSheet('Stop hosting?', 'This ends the game. Every phone\u2019s hand is cleared and everyone goes back to the start.', [
+      { label: 'End the game', kind: 'primary', fn: () => {
+        RT.conns.forEach((conn) => send(conn, { t: 'ended' }));
+        if (N.host) N.host.deal = null;
+        Object.assign(N, { mode: null, cards: null, kingNight: null });
+        saveN();
+        const p = RT.peer;
+        setTimeout(() => { if (RT.peer === p) stopLink(); }, 400);   // let the news go out first
+        goHome();
+      } },
       { label: 'Cancel' },
     ]);
   }
